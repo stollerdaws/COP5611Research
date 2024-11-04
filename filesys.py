@@ -212,7 +212,7 @@ class EncryptedFS(Fuse):
         return len(body)
     
 # Password and salt for encryption (For demonstration purposes; consider securely storing these)
-password = "secure_password"
+password = input("Enter password: ")
 salt = b"salty_salt"
 key = generate_key(password, salt)
 cipher = AESCipher(key)
@@ -239,10 +239,9 @@ def main():
 
     # Set additional FUSE options
     server.multithreaded = False
-    server.foreground = True
 
     # Parse the command-line options and run the server
-    server.parse(["-f", mountpoint], errex=1)
+    server.parse([mountpoint], errex=1)
     server.main()
 
 if __name__ == '__main__':
