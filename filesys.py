@@ -5,12 +5,16 @@ import stat
 import errno
 import fuse
 import sys
+import time
+import random
+import string
 from datetime import datetime
 from fuse import Fuse
 from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
 from Cryptodome.Protocol.KDF import PBKDF2
 import json
+from quantcrypt.cipher import Krypton
 
 fuse.fuse_python_api = (0, 2)
 
@@ -18,25 +22,39 @@ fuse.fuse_python_api = (0, 2)
 def generate_key(password, salt):
     return PBKDF2(password, salt, dkLen=32)
 
+def pad_password(password: str, length: int = 64) -> str:
+    if len(password) >= length:
+        return password[:length]  # Truncate if password is already longer than the specified length
+    padding_length = length - len(password)
+    padding = ''.join(random.choices(string.ascii_letters + string.digits, k=padding_length))
+    return password + padding
+
 # AES Encryption/Decryption functions
-class AESCipher:
+class KryptonCipher():
     def __init__(self, key):
         self.key = key
 
     def encrypt(self, data):
-        cipher = AES.new(self.key, AES.MODE_GCM)
-        ciphertext, tag = cipher.encrypt_and_digest(data)
-        return cipher.nonce + tag + ciphertext
+        cipher = Krypton(self.key)
+        cipher.begin_encryption()
+        ciphertext = cipher.encrypt(data)
+        verify_dp = cipher.finish_encryption()
+        return ciphertext + verify_dp
 
     def decrypt(self, encrypted_data):
-        nonce, tag, ciphertext = encrypted_data[:16], encrypted_data[16:32], encrypted_data[32:]
-        cipher = AES.new(self.key, AES.MODE_GCM, nonce=nonce)
-        return cipher.decrypt_and_verify(ciphertext, tag)
+        cipher = Krypton(self.key)
+        tag = encrypted_data[-160:]
+        cipher.begin_decryption(tag)
+        plaintext = cipher.decrypt(encrypted_data[:-160])
+        cipher.finish_decryption()
+        if plaintext is None:
+            raise ValueError("Decryption failed: Invalid tag")
+        return plaintext
 
 class FileData():
-    def __init__(self, contents: bytes = b'', cipher: AESCipher = None):
+    def __init__(self, contents: bytes = b'', cipher: KryptonCipher = None):
         self.cipher = cipher
-        self.contents = self.encrypt(contents) if contents else b''
+        self.contents = self.cipher.encrypt(contents) if contents else b''
         self.stat = FileStat()
         self.stat.st_size = len(contents)
         self.stat.st_ctime = FileStat.epoch_now()
@@ -46,8 +64,10 @@ class FileData():
         return self.cipher.encrypt(data) if self.cipher else data
 
     def decrypt(self):
-        return self.cipher.decrypt(self.contents) if self.cipher else self.contents
-
+        try:
+            return self.cipher.decrypt(self.contents) if self.cipher else self.contents
+        except ValueError as e:
+            return e
     def upd_access(self):
         self.stat.st_atime = FileStat.epoch_now()
 
@@ -150,8 +170,7 @@ class EncryptedFS(Fuse):
             file_stat.st_mode = stat.S_IFREG | 0o644  # Regular file with 644 permissions
             return file_stat
 
-        return -errno.ENOENT
-
+        return fuse.FuseOSError(errno.ENOENT)
 
     def read(self, path: str, size: int, offset: int) -> bytes:
         filename = path[1:]
@@ -171,52 +190,50 @@ class EncryptedFS(Fuse):
         return buf
 
     def create(self, path: str, mode: int, flags):
-        """Create a new file with given path and permissions."""
-        filename = path[1:]  # Strip leading '/'
+        filename = path[1:]  # Remove leading '/'
         
-        # Check if file already exists
-        if filename in self.file_data:
-            raise fuse.FuseOSError(errno.EEXIST)
-
-        # Create new file data with empty content and set mode
-        new_file = FileData(b'', self.cipher)
-        new_file.stat.st_mode = stat.S_IFREG | mode
-        new_file.stat.st_nlink = 1
-        self.file_data[filename] = new_file
-
-        # Persist the new file to disk
-        self.save_filesystem()
-
+        # Create a new file with default content if it does not exist
+        if filename not in self.file_data:
+            new_file = FileData(b'', self.cipher)
+            new_file.stat.st_mode = stat.S_IFREG | mode
+            new_file.stat.st_nlink = 1
+            new_file.stat.st_size = 0
+            now = time.time()
+            new_file.stat.st_atime = now
+            new_file.stat.st_mtime = now
+            self.file_data[filename] = new_file
+            self.save_filesystem()
+            
         return 0
 
-    def write(self, path: str, body: bytes, offset: int, flags=None):
+
+    def write(self, path: str, data: bytes, offset: int):
         filename = path[1:]
 
-        # If the file does not exist, create it
         if filename not in self.file_data:
-            self.create(path, 0o644, flags)  # Default permission mode
+            raise fuse.FuseOSError(errno.ENOENT)
 
-        # Attempt to decrypt existing contents, handle if it's empty
-        try:
-            contents = self.file_data[filename].decrypt()
-        except ValueError:
-        # If decryption fails due to missing nonce, initialize as empty
-            contents = b''
-        
-        new_content = contents[:offset] + body + contents[offset + len(body):]
+        # Decrypt current contents or initialize with an empty byte array
+        current_content = self.file_data[filename].decrypt() if offset == 0 else b''
+
+        # Insert new content at the correct offset (append or overwrite based on offset)
+        new_content = current_content[:offset] + data + current_content[offset + len(data):]
+
+        # Update the encrypted content and file size
         self.file_data[filename].contents = self.file_data[filename].encrypt(new_content)
         self.file_data[filename].stat.st_size = len(new_content)
         self.file_data[filename].upd_modif()
-        self.save_filesystem()  # Save changes to disk
+        self.save_filesystem()
 
-        return len(body)
+        return len(data)  # Return number of bytes written
+
+
     
 # Password and salt for encryption (For demonstration purposes; consider securely storing these)
 password = input("Enter password: ")
-salt = b"salty_salt"
-key = generate_key(password, salt)
-cipher = AESCipher(key)
-
+padded_password = pad_password(password)
+print("Padded password:", padded_password)
+cipher = KryptonCipher(padded_password)
 def main():
     if len(sys.argv) < 3:
         print("Usage: {} <mountpoint> <storage_path>".format(sys.argv[0]))
