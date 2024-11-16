@@ -92,7 +92,9 @@ class FileData():
         try:
             return self.cipher.decrypt(self.contents) if self.cipher else self.contents
         except ValueError as e:
-            return e
+            logging.error(f"Decryption failed: {e}")
+            raise e
+
     def upd_access(self):
         self.stat.st_atime = FileStat.epoch_now()
 
@@ -178,12 +180,12 @@ class EncryptedFS(Fuse):
 
 
     def readdir(self, path: str, offset: int):
-        logging.debug(f"readdir called for path: {path}, offset: {offset}")
+        #logging.debug(f"readdir called for path: {path}, offset: {offset}")
         for r in ['.', '..'] + list(self.file_data.keys()):
             yield fuse.Direntry(r)
 
     def getattr(self, path: str) -> fuse.Stat:
-        logging.debug(f"getattr called for path: {path}")
+        #logging.debug(f"getattr called for path: {path}")
         if path == '/':
             # Root directory attributes
             st = FileStat()
@@ -199,6 +201,40 @@ class EncryptedFS(Fuse):
             return file_stat
 
         return -errno.ENOENT
+
+    def setattr(self, path, attr, fh=None):
+        logging.debug(f"setattr called: path={path}, attr={attr}")
+        filename = path.lstrip("/")
+        if filename not in self.file_data:
+            logging.error(f"setattr: file not found: {filename}")
+            return -errno.ENOENT
+
+        file_stat = self.file_data[filename].stat
+
+        # Handle truncation (st_size)
+        if 'st_size' in attr:
+            new_size = attr['st_size']
+            logging.debug(f"Truncating {filename} to size {new_size}")
+            current_content = self.file_data[filename].decrypt()
+            truncated_content = current_content[:new_size].ljust(new_size, b'\x00')  # Pad with null bytes if needed
+            self.file_data[filename].contents = self.file_data[filename].encrypt(truncated_content)
+            file_stat.st_size = new_size
+
+        # Handle mode changes (st_mode)
+        if 'st_mode' in attr:
+            file_stat.st_mode = attr['st_mode']
+
+        # Handle access and modification times
+        if 'st_atime' in attr:
+            file_stat.st_atime = attr['st_atime']
+        if 'st_mtime' in attr:
+            file_stat.st_mtime = attr['st_mtime']
+
+        self.save_filesystem()
+        logging.info(f"setattr updated attributes for {filename}")
+        return 0
+
+
 
     def utimens(self, path, ts_acc, ts_mod):
         logging.debug(f"utimens called: path={path}, ts_acc={ts_acc}, ts_mod={ts_mod}")
@@ -255,20 +291,36 @@ class EncryptedFS(Fuse):
         return self.utimens(path, times)
 
 
-    def write(self, path: str, data: bytes, offset: int):
+    def write(self, path, data, offset, fh=None):
         logging.debug(f"write called for path: {path}, offset: {offset}, data length: {len(data)}")
-        filename = path[1:]  # Remove leading '/'
+        filename = path.lstrip("/")
+
         if filename not in self.file_data:
             logging.error(f"write: file not found: {filename}")
-            raise -errno.ENOENT
+            return -errno.ENOENT
+        # Decrypt the current content
+        logging.debug(f'current content: {self.file_data[filename].contents}')
+        if self.file_data[filename].contents == b'':   
+            current_content = b''
+        else:
+            try:
+                current_content = self.file_data[filename].decrypt()
+                if isinstance(current_content, Exception):
+                    raise current_content  # Raise the exception if decryption failed
+            except Exception as e:
+                logging.error(f"Decryption failed for {filename}: {e}")
+                return -errno.EIO  # Input/output error
 
-        current_content = self.file_data[filename].decrypt()
+        # Insert the new data at the specified offset
         new_content = current_content[:offset] + data + current_content[offset + len(data):]
+
+        # Encrypt and save the new content
         self.file_data[filename].contents = self.file_data[filename].encrypt(new_content)
         self.file_data[filename].stat.st_size = len(new_content)
         self.file_data[filename].upd_modif()
         self.save_filesystem()
 
+        logging.info(f"Write successful for {filename}: {len(data)} bytes written")
         return len(data)  # Return the number of bytes written
 
 
