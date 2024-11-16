@@ -359,10 +359,7 @@ class EncryptedFS(Fuse):
 
     
 # Password and salt for encryption (For demonstration purposes; consider securely storing these)
-password = input("Enter password: ")
-padded_password = pad_password(password)
-print("Padded password:", padded_password)
-cipher = KryptonCipher(padded_password)
+
 def main():
     if len(sys.argv) < 3:
         print("Usage: {} <mountpoint> <storage_path>".format(sys.argv[0]))
@@ -370,7 +367,9 @@ def main():
 
     mountpoint = sys.argv[1]
     storage_path = sys.argv[2]
+    password = sys.argv[3]
 
+    cipher = KryptonCipher(password)
     title = 'Encrypted Filesystem Example'
     descr = ("An example of an encrypted FUSE filesystem with AES encryption \n" +
              "for file contents. Allows for creating, reading, and modifying \n" +
