@@ -8,6 +8,7 @@ import sys
 import time
 import random
 import string
+import logging
 from datetime import datetime
 from fuse import Fuse
 from Cryptodome.Cipher import AES
@@ -15,7 +16,31 @@ from Cryptodome.Random import get_random_bytes
 from Cryptodome.Protocol.KDF import PBKDF2
 import json
 from quantcrypt.cipher import Krypton
+# Create a logger
+logger = logging.getLogger()  # Root logger
+logger.setLevel(logging.DEBUG)  # Set the global log level
 
+# Create a FileHandler to write logs to a file
+file_handler = logging.FileHandler('fuse_debug.log')
+file_handler.setLevel(logging.DEBUG)  # Set log level for this handler
+
+# Create a Formatter for the log messages
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)  # Attach formatter to the handler
+
+# Add the FileHandler to the logger
+logger.addHandler(file_handler)
+
+# Optional: Add a console handler to see logs in the terminal (for debugging during development)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+# Example logging calls
+logger.debug("This is a debug message")
+logger.info("This is an info message")
+logger.error("This is an error message")
 fuse.fuse_python_api = (0, 2)
 
 # Key generation function
@@ -146,16 +171,19 @@ class EncryptedFS(Fuse):
             }
             meta_path = os.path.join(self.storage_path, filename + '.meta')
             with open(meta_path, 'w') as meta_file:
-                json.dump(metadata, meta_file)
+                json.dump(metadata, meta_file)  # This should now work correctly
             data_path = os.path.join(self.storage_path, filename + '.data')
             with open(data_path, 'wb') as data_file:
                 data_file.write(file.contents)
 
+
     def readdir(self, path: str, offset: int):
+        logging.debug(f"readdir called for path: {path}, offset: {offset}")
         for r in ['.', '..'] + list(self.file_data.keys()):
             yield fuse.Direntry(r)
 
     def getattr(self, path: str) -> fuse.Stat:
+        logging.debug(f"getattr called for path: {path}")
         if path == '/':
             # Root directory attributes
             st = FileStat()
@@ -170,7 +198,31 @@ class EncryptedFS(Fuse):
             file_stat.st_mode = stat.S_IFREG | 0o644  # Regular file with 644 permissions
             return file_stat
 
-        return fuse.FuseOSError(errno.ENOENT)
+        return -errno.ENOENT
+
+    def utimens(self, path, ts_acc, ts_mod):
+        logging.debug(f"utimens called: path={path}, ts_acc={ts_acc}, ts_mod={ts_mod}")
+
+        # Remove leading '/' from path
+        filename = path.lstrip("/")
+
+        if filename not in self.file_data:
+            logging.error(f"File not found for utimens: {filename}")
+            raise fuse.FuseOSError(errno.ENOENT)
+
+        # Convert Timespec to float (seconds since epoch)
+        atime = ts_acc.tv_sec + ts_acc.tv_nsec / 1e9
+        mtime = ts_mod.tv_sec + ts_mod.tv_nsec / 1e9
+
+        # Update access and modification times
+        file_stat = self.file_data[filename].stat
+        file_stat.st_atime = atime
+        file_stat.st_mtime = mtime
+
+        # Persist the updated metadata
+        self.save_filesystem()
+        logging.info(f"Updated times for {filename}: atime={atime}, mtime={mtime}")
+        return 0
 
     def read(self, path: str, size: int, offset: int) -> bytes:
         filename = path[1:]
@@ -190,42 +242,34 @@ class EncryptedFS(Fuse):
         return buf
 
     def create(self, path: str, mode: int, flags):
+        logging.debug(f"create called for path: {path}, mode: {oct(mode)}, flags: {flags}")
         filename = path[1:]  # Remove leading '/'
-        
-        # Create a new file with default content if it does not exist
         if filename not in self.file_data:
             new_file = FileData(b'', self.cipher)
             new_file.stat.st_mode = stat.S_IFREG | mode
             new_file.stat.st_nlink = 1
-            new_file.stat.st_size = 0
-            now = time.time()
-            new_file.stat.st_atime = now
-            new_file.stat.st_mtime = now
             self.file_data[filename] = new_file
             self.save_filesystem()
-            
         return 0
+    def utime(self, path, times):
+        return self.utimens(path, times)
 
 
     def write(self, path: str, data: bytes, offset: int):
-        filename = path[1:]
-
+        logging.debug(f"write called for path: {path}, offset: {offset}, data length: {len(data)}")
+        filename = path[1:]  # Remove leading '/'
         if filename not in self.file_data:
-            raise fuse.FuseOSError(errno.ENOENT)
+            logging.error(f"write: file not found: {filename}")
+            raise -errno.ENOENT
 
-        # Decrypt current contents or initialize with an empty byte array
-        current_content = self.file_data[filename].decrypt() if offset == 0 else b''
-
-        # Insert new content at the correct offset (append or overwrite based on offset)
+        current_content = self.file_data[filename].decrypt()
         new_content = current_content[:offset] + data + current_content[offset + len(data):]
-
-        # Update the encrypted content and file size
         self.file_data[filename].contents = self.file_data[filename].encrypt(new_content)
         self.file_data[filename].stat.st_size = len(new_content)
         self.file_data[filename].upd_modif()
         self.save_filesystem()
 
-        return len(data)  # Return number of bytes written
+        return len(data)  # Return the number of bytes written
 
 
     
@@ -256,10 +300,12 @@ def main():
 
     # Set additional FUSE options
     server.multithreaded = False
-
+    server.fuse_args.add('debug')
     # Parse the command-line options and run the server
     server.parse([mountpoint], errex=1)
+    logging.info(f"Starting FUSE server at mountpoint: {mountpoint}")
     server.main()
+    logging.info("FUSE server stopped.")
 
 if __name__ == '__main__':
     main()
