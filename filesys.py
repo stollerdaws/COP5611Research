@@ -323,6 +323,39 @@ class EncryptedFS(Fuse):
         logging.info(f"Write successful for {filename}: {len(data)} bytes written")
         return len(data)  # Return the number of bytes written
 
+    def unlink(self, path: str):
+        """
+        Remove a file from the encrypted filesystem.
+        """
+        logging.debug(f"unlink called for path: {path}")
+        filename = path.lstrip("/")  # Remove leading '/'
+        
+        if filename not in self.file_data:
+            logging.error(f"unlink: file not found: {filename}")
+            return -errno.ENOENT
+
+        # Remove the file from in-memory data structure
+        del self.file_data[filename]
+        logging.info(f"File {filename} removed from memory.")
+
+        # Delete the corresponding files from disk
+        meta_path = os.path.join(self.storage_path, filename + '.meta')
+        data_path = os.path.join(self.storage_path, filename + '.data')
+        
+        if os.path.exists(meta_path):
+            os.remove(meta_path)
+            logging.info(f"Metadata file {meta_path} deleted.")
+        else:
+            logging.warning(f"Metadata file {meta_path} does not exist.")
+
+        if os.path.exists(data_path):
+            os.remove(data_path)
+            logging.info(f"Data file {data_path} deleted.")
+        else:
+            logging.warning(f"Data file {data_path} does not exist.")
+        
+        return 0
+
 
     
 # Password and salt for encryption (For demonstration purposes; consider securely storing these)
