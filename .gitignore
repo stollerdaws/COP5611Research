@@ -1,2 +1,5 @@
 fuse-3.16.2/
 .venv/
+str/
+fuse_debug.log
+log.txt

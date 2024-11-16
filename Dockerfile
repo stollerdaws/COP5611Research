@@ -9,3 +9,4 @@ RUN pip install -r requirements.txt
 RUN mkdir /app/data
 COPY start.sh /app/start.sh
 CMD ["/app/start.sh"]
+
