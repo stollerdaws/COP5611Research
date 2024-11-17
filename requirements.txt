@@ -1,0 +1,3 @@
+quantcrypt
+pycryptodome
+fuse-python
