@@ -15,6 +15,7 @@ from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
 from Cryptodome.Protocol.KDF import PBKDF2
 import json
+import binascii
 from quantcrypt.cipher import Krypton
 # Create a logger
 logger = logging.getLogger()  # Root logger
@@ -152,7 +153,10 @@ class EncryptedFS(Fuse):
                 if os.path.exists(data_path):
                     with open(data_path, 'rb') as data_file:
                         encrypted_data = data_file.read()
-                    contents = self.cipher.decrypt(encrypted_data)
+                    if encrypted_data == b'':
+                        contents = b''
+                    else:
+                        contents = self.cipher.decrypt(encrypted_data)
                     file = FileData(contents, self.cipher)
                     file.stat.st_size = metadata['st_size']
                     file.stat.st_mode = metadata['st_mode']
@@ -368,6 +372,7 @@ def main():
     mountpoint = sys.argv[1]
     storage_path = sys.argv[2]
     password = sys.argv[3]
+    password = binascii.unhexlify(password)
 
     cipher = KryptonCipher(password)
     title = 'Encrypted Filesystem Example'
