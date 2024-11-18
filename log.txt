@@ -1,0 +1,14 @@
+2024-11-17 15:28:30,994 - DEBUG - This is a debug message
+2024-11-17 15:28:30,995 - INFO - This is an info message
+2024-11-17 15:28:30,995 - ERROR - This is an error message
+Traceback (most recent call last):
+  File "/home/ubuntusfs/COP5611Research/filesys.py", line 395, in <module>
+    main()
+  File "/home/ubuntusfs/COP5611Research/filesys.py", line 383, in main
+    server = EncryptedFS(storage_path, cipher)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntusfs/COP5611Research/filesys.py", line 130, in __init__
+    os.makedirs(storage_path)
+  File "<frozen os>", line 215, in makedirs
+  File "<frozen os>", line 225, in makedirs
+PermissionError: [Errno 13] Permission denied: '/app'
