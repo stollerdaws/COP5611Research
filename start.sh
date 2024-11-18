@@ -21,8 +21,9 @@ fi
 echo "Your passphrase is: $PASSPHRASE"
 echo "Keep this passphrase safe for reusing the system."
 
-python3 filesys.py mnt str $PASSPHRASE
 python3 filesys.py /app/data /app/str "$PASSPHRASE" > log.txt 2>&1 &
+sleep 3
+cd str/
 python3 -m http.server 8080 > /app/http_server.log 2>&1 &
 echo "Filesystem started. Opening shell..."
 exec /bin/bash
