@@ -44,18 +44,6 @@ logger.info("This is an info message")
 logger.error("This is an error message")
 fuse.fuse_python_api = (0, 2)
 
-# Key generation function
-def generate_key(password, salt):
-    return PBKDF2(password, salt, dkLen=32)
-
-def pad_password(password: str, length: int = 64) -> str:
-    if len(password) >= length:
-        return password[:length]  # Truncate if password is already longer than the specified length
-    padding_length = length - len(password)
-    padding = ''.join(random.choices(string.ascii_letters + string.digits, k=padding_length))
-    return password + padding
-
-# AES Encryption/Decryption functions
 class KryptonCipher():
     def __init__(self, key):
         self.key = key
@@ -375,10 +363,6 @@ def main():
     password = binascii.unhexlify(password)
 
     cipher = KryptonCipher(password)
-    title = 'Encrypted Filesystem Example'
-    descr = ("An example of an encrypted FUSE filesystem with AES encryption \n" +
-             "for file contents. Allows for creating, reading, and modifying \n" +
-             "files, with all data stored in an encrypted storage directory.")
 
     # Ensure that mountpoint and storage_path are not the same
     if os.path.abspath(mountpoint) == os.path.abspath(storage_path):
